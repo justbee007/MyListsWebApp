@@ -1,0 +1,154 @@
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: todo-app-secret
+  namespace: kubernetes-dashboard
+  labels:
+    app: todo-app
+data:
+  DB_USER: Y3N5ZTcxMjU=
+  DB_PASSWORD: Y3N5ZTcxMjVwYXNz
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: todo-app-config
+  namespace: kubernetes-dashboard
+  labels:
+    app: todo-app
+data:
+  NODE_ENV: webapp
+  DB_NAME: rdsdbcsye7125
+  # FLYWAY_ENDPOINT: jdbc:postgresql://rdsdbcsye7125.cny8sxnztedt.us-east-1.rds.amazonaws.com:5432/rdsdbcsye7125
+  FLYWAY_ENDPOINT: $FLYWAY_ENDPOINT
+  # DB_HOST: rdsdbcsye7125.cny8sxnztedt.us-east-1.rds.amazonaws.com
+  DB_HOST: $DB_HOST
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: todo-app
+  namespace: kubernetes-dashboard
+  labels:
+    app: todo-app
+spec:
+  type: LoadBalancer
+  selector:
+    app: todo-app
+  ports:
+    - protocol: TCP
+      name: http
+      port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: todo-app
+  namespace: kubernetes-dashboard
+  labels:
+    app: todo-app
+spec:
+  replicas: 3
+  progressDeadlineSeconds: 120
+  minReadySeconds: 30
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: todo-app
+  template:
+    metadata:
+      labels:
+        app: todo-app
+    spec:
+      imagePullSecrets:
+      - name: regcred
+      containers:
+        - name: todo
+          image: csye7125fall2022group07/todo-app:v14
+
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NODE_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: todo-app
+                  key: NODE_ENV
+                  optional: true
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: todo-app-config
+                  key: DB_HOST
+                  optional: true
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: todo-app-config
+                  key: DB_NAME
+                  optional: true
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: todo-app-secret
+                  key: DB_PASSWORD
+                  optional: true
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: todo-app-secret
+                  key: DB_USER
+                  optional: true
+          envFrom:
+            - configMapRef:
+                name: todo-app-config
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "100Mi"
+              cpu: "500m"
+            limits:
+              memory: "256Mi"
+              cpu: "1000m"
+      initContainers:
+        - name: db-migration-flyway
+          image: csye7125fall2022group07/db-migrate-flyway:v2
+          env:
+            - name: FLYWAY_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: todo-app-config
+                  key: FLYWAY_ENDPOINT
+                  optional: true
+            - name: FLYWAY_USER
+              valueFrom:
+                secretKeyRef:
+                  name: todo-app-secret
+                  key: DB_USER
+                  optional: true
+            - name: FLYWAY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: todo-app-secret
+                  key: DB_PASSWORD
+                  optional: true
+          args: ["migrate"]
